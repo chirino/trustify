@@ -30,6 +30,7 @@ use tokio::sync::OnceCell;
 
 use trustify_common::db::limiter::LimiterTrait;
 
+use trustify_common::db::query::{q, Filtering, Query};
 use trustify_common::db::Database;
 use trustify_common::model::{Paginated, PaginatedResults};
 use trustify_entity::conversation;
@@ -183,11 +184,12 @@ impl AiService {
             .await
     }
 
-    pub async fn completions<C: ConnectionTrait>(
-        &self,
-        request: &ChatState,
-        _connection: &C,
-    ) -> Result<ChatState, Error> {
+    pub async fn summarize(&self, _request: &ChatState) -> Result<String, Error> {
+        // todo: implement a summarization function
+        Ok("".to_string())
+    }
+
+    pub async fn completions(&self, request: &ChatState) -> Result<ChatState, Error> {
         let llm = match self.llm.clone() {
             Some(llm) => llm,
             None => return Err(Error::NotFound("AI service is not enabled".to_string())),
@@ -350,11 +352,13 @@ impl AiService {
     pub async fn fetch_conversations<C: ConnectionTrait + Sync + Send>(
         &self,
         user_id: String,
+        search: Query,
         paginated: Paginated,
         connection: &C,
     ) -> Result<PaginatedResults<conversation::Model>, Error> {
         let limiter = conversation::Entity::find()
             .order_by_desc(conversation::Column::UpdatedAt)
+            .filtering(search)?
             .filter(conversation::Column::UserId.eq(user_id))
             .limiting(connection, paginated.offset, paginated.limit);
 

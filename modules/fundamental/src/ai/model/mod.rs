@@ -1,12 +1,29 @@
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use utoipa::ToSchema;
+use uuid::Uuid;
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema, PartialEq)]
+pub struct Conversation {
+    pub id: Uuid,
+    pub state: ChatState,
+    pub updated_at: OffsetDateTime,
+    pub seq: i32,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+pub struct ConversationSummary {
+    pub id: Uuid,
+    pub updated_at: OffsetDateTime,
+    pub summary: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema, PartialEq)]
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema, PartialEq)]
 pub struct ChatMessage {
     pub message_type: MessageType,
     pub content: String,

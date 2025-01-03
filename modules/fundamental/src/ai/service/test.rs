@@ -4,7 +4,7 @@ use serde_json::json;
 
 use test_context::test_context;
 use test_log::test;
-
+use trustify_common::db::query::Query;
 use trustify_common::hashing::Digests;
 use trustify_common::model::Paginated;
 use trustify_module_ingestor::graph::product::ProductInformation;
@@ -80,7 +80,7 @@ async fn test_completions_sbom_info(ctx: &TrustifyContext) -> Result<(), anyhow:
             .into(),
     );
 
-    let result = service.completions(&req, &ctx.db).await?;
+    let result = service.completions(&req).await?;
 
     log::info!("result: {:#?}", result);
     let last_message_content = result.messages.last().unwrap().content.clone();
@@ -108,7 +108,7 @@ async fn test_completions_package_info(ctx: &TrustifyContext) -> Result<(), anyh
     let mut req = ChatState::new();
     req.add_human_message("List the httpclient packages with their identifiers".into());
 
-    let result = service.completions(&req, &ctx.db).await?;
+    let result = service.completions(&req).await?;
 
     log::info!("result: {:#?}", result);
     let last_message_content = result.messages.last().unwrap().content.clone();
@@ -137,7 +137,7 @@ async fn test_completions_cve_info(ctx: &TrustifyContext) -> Result<(), anyhow::
     let mut req = ChatState::new();
     req.add_human_message("Give me details for CVE-2021-32714".into());
 
-    let result = service.completions(&req, &ctx.db).await?;
+    let result = service.completions(&req).await?;
 
     log::info!("result: {:#?}", result);
     let last_message_content = result.messages.last().unwrap().content.clone();
@@ -165,7 +165,7 @@ async fn test_completions_advisory_info(ctx: &TrustifyContext) -> Result<(), any
     let mut req = ChatState::new();
     req.add_human_message("Give me details for the RHSA-2024_3666 advisory".into());
 
-    let result = service.completions(&req, &ctx.db).await?;
+    let result = service.completions(&req).await?;
 
     log::info!("result: {:#?}", result);
     let last_message_content = result.messages.last().unwrap().content.clone();
@@ -208,6 +208,7 @@ async fn conversation_crud(ctx: &TrustifyContext) -> Result<(), anyhow::Error> {
     let converstations = service
         .fetch_conversations(
             "user_a".into(),
+            Query::default(),
             Paginated {
                 offset: 0,
                 limit: 10,
