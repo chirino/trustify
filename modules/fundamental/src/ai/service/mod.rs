@@ -344,7 +344,6 @@ impl AiService {
         connection: &C,
     ) -> Result<(conversation::Model, Vec<ChatMessage>), Error> {
         let found = self.fetch_conversation(conversation_id, connection).await?;
-        let mut update = false;
         let internal_state = match found {
             Some((conversation, internal_state)) => {
                 // verify that the conversation belongs to the user
@@ -353,10 +352,27 @@ impl AiService {
                     // existence of the conversation
                     Err(Error::NotFound("conversation not found".to_string()))?;
                 }
-                update = true;
                 internal_state
             }
-            None => InternalState::default(),
+            None => {
+                // store the new conversation, LLM request will take a while,
+                // and we want subsequent concurrent requests to update this record.
+                let internal_state = InternalState::default();
+                let model = conversation::ActiveModel {
+                    id: Set(conversation_id),
+                    user_id: Set(user_id),
+                    state: Set(serde_json::to_value(&internal_state)
+                        .map_err(|e| Error::Internal(e.to_string()))?),
+                    summary: Set("".to_string()),
+                    seq: Set(seq),
+                    updated_at: Set(OffsetDateTime::now_utc()),
+                };
+
+                // TODO: check for duplicate conversation_id error, and retry as an update
+                // to deal with concurrent initial upsert requests.
+                model.insert(connection).await?;
+                internal_state
+            }
         };
 
         // generate an assistant response
@@ -368,7 +384,7 @@ impl AiService {
         // in the background and update the record later.
         let summary = self.summarize(&response).await?;
 
-        let mut model = conversation::ActiveModel {
+        let model = conversation::ActiveModel {
             id: Set(conversation_id),
             state: Set(serde_json::to_value(&internal_state)
                 .map_err(|e| Error::Internal(e.to_string()))?),
@@ -378,15 +394,11 @@ impl AiService {
             ..Default::default()
         };
 
-        let result = if update {
-            conversation::Entity::update(model)
-                .filter(conversation::Column::Seq.lte(seq))
-                .exec(connection)
-                .await?
-        } else {
-            model.user_id = Set(user_id);
-            model.insert(connection).await?
-        };
+        let result = conversation::Entity::update(model)
+            .filter(conversation::Column::Seq.lte(seq))
+            .exec(connection)
+            .await?;
+
         Ok((result, response))
     }
 

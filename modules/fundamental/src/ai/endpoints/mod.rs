@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod test;
 
-use crate::ai::model::{Conversation, ConversationSummary};
 use crate::{
-    ai::model::{AiFlags, AiTool, ChatState},
+    ai::model::{AiFlags, AiTool, ChatState, Conversation, ConversationSummary},
     ai::service::AiService,
     Error,
 };
