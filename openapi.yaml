@@ -326,6 +326,11 @@ paths:
       responses:
         '200':
           description: The resulting conversation
+          headers:
+            etag:
+              schema:
+                type: string
+              description: Sequence ID
           content:
             application/json:
               schema:
@@ -333,7 +338,7 @@ paths:
         '400':
           description: The request was invalid
         '404':
-          description: The AI service is not enabled or the conversation was not found
+          description: The AI service is not enabled
     put:
       tags:
       - ai
@@ -346,11 +351,21 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: if-match
+        in: header
+        description: The revision to update
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Conversation'
+              type: array
+              items:
+                $ref: '#/components/schemas/ChatMessage'
         required: true
       responses:
         '200':

@@ -206,14 +206,14 @@ async fn conversation_crud(ctx: &TrustifyContext) -> Result<(), anyhow::Error> {
             conversation_id,
             "user_a".into(),
             &state.messages,
-            0,
+            Some(0),
             &ctx.db,
         )
         .await?;
 
     assert_eq!("user_a", conversation.user_id);
     assert_eq!("hello", conversation.summary);
-    assert_eq!(0i32, conversation.seq);
+    assert_eq!(1i32, conversation.seq);
 
     // get the created conversation
     let fetched = service
@@ -249,7 +249,7 @@ async fn conversation_crud(ctx: &TrustifyContext) -> Result<(), anyhow::Error> {
             conversation_id,
             "user_a".into(),
             &state.messages,
-            1,
+            Some(1),
             &ctx.db,
         )
         .await?
@@ -266,7 +266,7 @@ async fn conversation_crud(ctx: &TrustifyContext) -> Result<(), anyhow::Error> {
 
     // verify that the update fails due to old seq
     service
-        .upsert_conversation(conversation_id, "user_a".into(), &vec![], 0, &ctx.db)
+        .upsert_conversation(conversation_id, "user_a".into(), &vec![], Some(0), &ctx.db)
         .await
         .expect_err("should fail due to old seq");
 

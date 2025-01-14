@@ -340,11 +340,11 @@ impl AiService {
         conversation_id: Uuid,
         user_id: String,
         messages: &Vec<ChatMessage>,
-        seq: i32,
+        if_seq: Option<i32>,
         connection: &C,
     ) -> Result<(conversation::Model, Vec<ChatMessage>), Error> {
         let found = self.fetch_conversation(conversation_id, connection).await?;
-        let internal_state = match found {
+        let (internal_state, current_seq) = match found {
             Some((conversation, internal_state)) => {
                 // verify that the conversation belongs to the user
                 if conversation.user_id != user_id {
@@ -352,12 +352,13 @@ impl AiService {
                     // existence of the conversation
                     Err(Error::NotFound("conversation not found".to_string()))?;
                 }
-                internal_state
+                (internal_state, if_seq.unwrap_or(conversation.seq))
             }
             None => {
                 // store the new conversation, LLM request will take a while,
                 // and we want subsequent concurrent requests to update this record.
                 let internal_state = InternalState::default();
+                let seq = if_seq.unwrap_or(0);
                 let model = conversation::ActiveModel {
                     id: Set(conversation_id),
                     user_id: Set(user_id),
@@ -370,12 +371,19 @@ impl AiService {
 
                 // TODO: check for duplicate conversation_id error, and retry as an update
                 // to deal with concurrent initial upsert requests.
+                log::info!("inserting conversation into db: {}", conversation_id);
                 model.insert(connection).await?;
-                internal_state
+                (internal_state, seq)
             }
         };
 
         // generate an assistant response
+        log::info!(
+            "got conversation: {}, seq: {}, if_seq: {:?}",
+            conversation_id,
+            current_seq,
+            if_seq
+        );
         let internal_state = self.completions_decoded(messages, &internal_state).await?;
 
         let response = internal_state.chat_messages();
@@ -389,15 +397,16 @@ impl AiService {
             state: Set(serde_json::to_value(&internal_state)
                 .map_err(|e| Error::Internal(e.to_string()))?),
             summary: Set(summary),
-            seq: Set(seq),
+            seq: Set(current_seq + 1),
             updated_at: Set(OffsetDateTime::now_utc()),
             ..Default::default()
         };
 
-        let result = conversation::Entity::update(model)
-            .filter(conversation::Column::Seq.lte(seq))
-            .exec(connection)
-            .await?;
+        let mut query = conversation::Entity::update(model);
+        if let Some(seq) = if_seq {
+            query = query.filter(conversation::Column::Seq.lte(seq))
+        }
+        let result = query.exec(connection).await?;
 
         Ok((result, response))
     }

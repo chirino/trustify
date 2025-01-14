@@ -187,14 +187,6 @@ async fn conversation_crud(ctx: &TrustifyContext) -> anyhow::Result<()> {
     // Create a conversation
     let request = TestRequest::post()
         .uri("/api/v1/ai/conversations")
-        .set_json(json!(
-            {"messages":[
-                {
-                    "message_type": "human",
-                    "content": "Give me information about the SBOMs available for quarkus reporting its name, SHA and URL."
-                }
-            ]}
-        ))
         .to_request()
         .test_auth("user-a");
 
@@ -203,8 +195,31 @@ async fn conversation_crud(ctx: &TrustifyContext) -> anyhow::Result<()> {
 
     let conversation_v1: Conversation = read_body_json(response).await;
     assert_eq!(conversation_v1.seq, 0);
+    assert_eq!(
+        conversation_v1.messages.len(),
+        0,
+        "empty conversation should have no messages"
+    );
+
+    // Add first message to the conversation
+    let mut update1 = conversation_v1.messages.clone();
+    update1.push(ChatMessage::human(
+        "What is the latest version of Quarks?".into(),
+    ));
+
+    let request = TestRequest::put()
+        .uri(format!("/api/v1/ai/conversations/{}", conversation_v1.id).as_str())
+        .set_json(update1.clone())
+        .to_request()
+        .test_auth("user-a");
+
+    let response = app.call_service(request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let conversation_v2: Conversation = read_body_json(response).await;
+    assert_eq!(conversation_v2.seq, 1);
     assert!(
-        conversation_v1.messages.len() > 1,
+        conversation_v2.messages.len() > update1.len(),
         "assistant should add more messages"
     );
 
@@ -232,28 +247,28 @@ async fn conversation_crud(ctx: &TrustifyContext) -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
 
     let result: Conversation = read_body_json(response).await;
-    assert_eq!(result, conversation_v1);
+    assert_eq!(result, conversation_v2);
 
     // Verify that we can update the conversation
-    let mut update1 = conversation_v1.clone();
-    update1.seq = 1;
-    update1.messages.push(ChatMessage::human(
+    let mut update2 = conversation_v2.messages.clone();
+    update2.push(ChatMessage::human(
         "Are there any related CVEs affecting it?".into(),
     ));
 
     let request = TestRequest::put()
         .uri(format!("/api/v1/ai/conversations/{}", conversation_v1.id).as_str())
-        .set_json(update1.clone())
+        .append_header(("if-match", format!("\"{}\"", conversation_v2.seq).as_str()))
+        .set_json(update2.clone())
         .to_request()
         .test_auth("user-a");
 
     let response = app.call_service(request).await;
     assert_eq!(response.status(), StatusCode::OK);
 
-    let conversation_v2: Conversation = read_body_json(response).await;
-    assert_eq!(conversation_v2.seq, 1);
+    let conversation_v3: Conversation = read_body_json(response).await;
+    assert_eq!(conversation_v3.seq, conversation_v2.seq + 1);
     assert!(
-        conversation_v2.messages.len() > update1.messages.len(),
+        conversation_v3.messages.len() > update2.len(),
         "assistant should add more messages"
     );
 
@@ -267,7 +282,7 @@ async fn conversation_crud(ctx: &TrustifyContext) -> anyhow::Result<()> {
     assert_eq!(response.status(), StatusCode::OK);
 
     let result: Conversation = read_body_json(response).await;
-    assert_eq!(result, conversation_v2);
+    assert_eq!(result, conversation_v3);
 
     // Verify that we can delete the conversation
     let request = TestRequest::delete()

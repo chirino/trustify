@@ -2,12 +2,19 @@
 mod test;
 
 use crate::{
-    ai::model::{AiFlags, AiTool, ChatState, Conversation, ConversationSummary},
-    ai::service::AiService,
+    ai::{
+        model::{AiFlags, AiTool, ChatState, Conversation, ConversationSummary},
+        service::AiService,
+    },
     Error,
 };
-use actix_http::header;
-use actix_web::{delete, get, post, put, web, HttpResponse, Responder};
+use actix_web::{
+    delete, get,
+    http::header::{self, ETag, EntityTag, IfMatch},
+    post, put, web, HttpResponse, Responder,
+};
+
+use crate::ai::model::ChatMessage;
 use itertools::Itertools;
 use time::OffsetDateTime;
 use trustify_auth::authenticator::user::UserDetails;
@@ -170,9 +177,10 @@ fn to_offset_date_time(uuid: Uuid) -> Result<OffsetDateTime, Error> {
     tag = "ai",
     operation_id = "updateConversation",
     params(
-        ("id", Path, description = "Opaque ID of the conversation")
+        ("id", Path, description = "Opaque ID of the conversation"),
+        ("if-match"=Option<String>, Header, description = "The revision to update")
     ),
-    request_body = Conversation,
+    request_body = Vec<ChatMessage>,
     responses(
         (status = 200, description = "The resulting conversation", body = Conversation),
         (status = 400, description = "The request was invalid"),
@@ -184,22 +192,22 @@ pub async fn update_conversation(
     service: web::Data<AiService>,
     db: web::Data<Database>,
     id: web::Path<Uuid>,
+    web::Header(if_match): web::Header<IfMatch>,
     user: UserDetails,
-    request: web::Json<Conversation>,
+    request: web::Json<Vec<ChatMessage>>,
     _: Require<Ai>,
 ) -> actix_web::Result<impl Responder> {
     let user_id = user.id;
-
+    let seq = match &if_match {
+        IfMatch::Any => None,
+        IfMatch::Items(items) => items
+            .first()
+            .and_then(|etag| etag.tag().parse::<i32>().ok()),
+    };
     let conversation_id = id.into_inner();
 
     let (conversation, messages) = service
-        .upsert_conversation(
-            conversation_id,
-            user_id,
-            &request.messages,
-            request.seq,
-            db.as_ref(),
-        )
+        .upsert_conversation(conversation_id, user_id, &request, seq, db.as_ref())
         .await?;
 
     let conversation = Conversation {
@@ -263,9 +271,11 @@ pub async fn list_conversations(
         ("id", Path, description = "Opaque ID of the conversation")
     ),
     responses(
-        (status = 200, description = "The resulting conversation", body = Conversation),
+        (status = 200, description = "The resulting conversation", body = Conversation, headers(
+            ("etag" = String, description = "Sequence ID")
+        )),
         (status = 400, description = "The request was invalid"),
-        (status = 404, description = "The AI service is not enabled or the conversation was not found")
+        (status = 404, description = "The AI service is not enabled")
     )
 )]
 #[get("/v1/ai/conversations/{id}")]
@@ -283,12 +293,14 @@ pub async fn get_conversation(
 
     match conversation {
         // return an empty conversation i
-        None => Ok(HttpResponse::Ok().json(Conversation {
-            id: uuid,
-            messages: Default::default(),
-            updated_at: to_offset_date_time(uuid)?,
-            seq: 0,
-        })),
+        None => Ok(HttpResponse::Ok()
+            .append_header((header::ETAG, ETag(EntityTag::new_strong("0".to_string()))))
+            .json(Conversation {
+                id: uuid,
+                messages: Default::default(),
+                updated_at: to_offset_date_time(uuid)?,
+                seq: 0,
+            })),
 
         // Found the conversation
         Some((conversation, internal_state)) => {
@@ -299,12 +311,17 @@ pub async fn get_conversation(
                 Err(Error::NotFound("conversation not found".to_string()))?;
             }
 
-            Ok(HttpResponse::Ok().json(Conversation {
-                id: conversation.id,
-                updated_at: conversation.updated_at,
-                messages: internal_state.chat_messages(),
-                seq: conversation.seq,
-            }))
+            Ok(HttpResponse::Ok()
+                .append_header((
+                    header::ETAG,
+                    ETag(EntityTag::new_strong(format!("{}", conversation.seq))),
+                ))
+                .json(Conversation {
+                    id: conversation.id,
+                    updated_at: conversation.updated_at,
+                    messages: internal_state.chat_messages(),
+                    seq: conversation.seq,
+                }))
         }
     }
 }
