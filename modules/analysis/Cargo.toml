@@ -11,7 +11,10 @@ trustify-common = { workspace = true }
 trustify-entity = { workspace = true }
 
 actix-http = { workspace = true }
+actix-utils = { workspace = true }
 actix-web = { workspace = true }
+actix-rt = "2.10.0"
+form_urlencoded = { workspace = true }
 anyhow = { workspace = true }
 bytesize = { workspace = true }
 clap = { workspace = true }
@@ -32,6 +35,7 @@ tracing = { workspace = true }
 utoipa = { workspace = true, features = ["actix_extras", "uuid"] }
 utoipa-actix-web = { workspace = true }
 uuid = { workspace = true }
+futures = "0.3.31"
 
 [dev-dependencies]
 actix-http = { workspace = true }

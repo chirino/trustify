@@ -2,6 +2,7 @@ mod query;
 
 #[cfg(test)]
 mod test;
+mod openapi_query;
 
 use super::service::{AnalysisService, QueryOptions};
 use crate::{

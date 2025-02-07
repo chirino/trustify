@@ -1,10 +1,12 @@
 use crate::test::caller;
 use actix_http::Request;
 use actix_web::test::TestRequest;
+use actix_web::web::Query;
 use jsonpath_rust::JsonPathQuery;
 use serde_json::{json, Value};
 use test_context::test_context;
 use test_log::test;
+use utoipa::IntoParams;
 use trustify_test_context::{call::CallService, subset::ContainsSubset, TrustifyContext};
 
 #[test_context(TrustifyContext)]
@@ -816,6 +818,70 @@ async fn spdx_only_contains_relationships(ctx: &TrustifyContext) -> Result<(), a
 
     Ok(())
 }
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, IntoParams)]
+struct Data {
+    #[serde(default)]
+    vec: Vec<String>,
+}
+
+
+#[test]
+fn x() {
+
+    let req = TestRequest::with_uri("/name/user1/?vec=test").to_srv_request();
+    let s = Query::<Data>::from_query(req.query_string()).unwrap();
+
+    assert_eq!(s.vec, vec!["test"]);
+
+}
+
+#[test_context(TrustifyContext)]
+#[test(actix_web::test)]
+async fn spdx_all_relationships(ctx: &TrustifyContext) -> Result<(), anyhow::Error> {
+    // test case for the simple case of filtering descendants "relationshipType": "CONTAINS" spdx relationships:
+    // https://github.com/trustification/trustify/issues/1232
+
+    let app = caller(ctx).await?;
+    ctx.ingest_document("spdx/issue-552.json")
+        .await?;
+
+    let uri = format!(
+        "/api/v2/analysis/component/{}?descendants=10&ancestors=10",
+        urlencoding::encode("Saxon")
+    );
+    let request: Request = TestRequest::get().uri(&uri).to_request();
+    let response: Value = app.call_and_read_body_json(request).await;
+    log::info!("{}", serde_json::to_string_pretty(&response)?);
+
+    assert!(response.contains_subset(json!({
+        "items": [ {
+            "name": "rubygem-google-cloud-compute",
+            "version": "0.5.0-1.el8sat",
+            "ancestors": [ {
+                "relationship": "package",
+                "name": "SATELLITE-6.15-RHEL-8",
+                "version": "6.15",
+                "ancestors": [ {
+                    "node_id": "SPDXRef-DOCUMENT",
+                    "relationship": "describes",
+                }],
+            }],
+            "descendants": [ {
+                "relationship": "contains",
+                "name": "rubygem-google-cloud-compute-doc",
+                "version": "0.5.0-1.el8sat",
+            }, {
+                "relationship": "contains",
+                "name": "rubygem-google-cloud-compute",
+                "version": "0.5.0-1.el8sat",
+            }]
+        }]
+    })));
+
+    Ok(())
+}
+
 
 #[test_context(TrustifyContext)]
 #[test(actix_web::test)]
