@@ -117,21 +117,14 @@ impl Server {
             // Remove jobs that are finished
             runs.retain(|_, job| !job.is_finished());
 
-            {
-                let guard = membership.read().expect("lock is poisoned");
-                match guard.as_ref() {
-                    Some(membership) => {
-                        // let's only run jobs if we are the leader... we could do fancier hash distributions
-                        // too... but let's keep it simple for now.
-                        if !membership.is_leader() {
-                            continue;
-                        }
-                    }
-                    None => {
-                        continue
-                    }
-                }
-            }
+            let membership = membership.read().ok().map(|x| x.clone()).flatten();
+
+            let is_leader_for = move |x:String| {
+                membership
+                    .as_ref()
+                    .map(|m| m.is_leader_for(x.as_str()))
+                    .unwrap_or(false)
+            };
 
             // Asynchronously fire off new jobs subject to max concurrency
             let todo: Vec<_> = service
@@ -139,7 +132,7 @@ impl Server {
                 .await?
                 .into_iter()
                 .filter(|i| {
-                    !(runs.contains_key(&i.name) || i.data.configuration.disabled || can_wait(i))
+                    !(runs.contains_key(&i.name) || i.data.configuration.disabled || can_wait(i) || is_leader_for(i.name.clone()))
                 })
                 .take(self.concurrency - runs.len())
                 .map(|i| {

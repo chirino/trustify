@@ -22,7 +22,7 @@ pub struct MembershipEvent {
     pub members: Vec<Uuid>,
 }
 
-fn calculate_hash<T: Hash>(t: &str) -> usize {
+fn calculate_hash(t: &str) -> usize {
     let mut s = DefaultHasher::new();
     t.hash(&mut s);
     s.finish() as usize
@@ -158,31 +158,40 @@ mod tests {
         replica_manager_1.start().await;
 
         println!("waiting for first event from replica_manager_1");
-        let members = sub1.recv().await.unwrap();
-        assert_eq!(members, MembershipEvent{
+        let members1 = sub1.recv().await.unwrap();
+        assert_eq!(members1, MembershipEvent{
             replica_id: replica_manager_1.replica_id,
             members: vec![replica_manager_1.replica_id],
         });
 
+        assert!(members1.is_leader());
+        assert!(members1.is_leader_for("test"));
 
         let replica_manager_2 = ReplicaManager::new(ctx.db.clone(), interval);
         let mut sub2 = replica_manager_2.subscribe();
         replica_manager_2.start().await;
 
         println!("waiting for first event from replica_manager_2");
-        let members = sub2.recv().await.unwrap();
-        assert_eq!(members, MembershipEvent{
+        let members2 = sub2.recv().await.unwrap();
+        assert_eq!(members2, MembershipEvent{
             replica_id: replica_manager_2.replica_id,
             members: vec![replica_manager_1.replica_id, replica_manager_2.replica_id],
         });
-
+        assert!(!members2.is_leader()); // we can't be the leader since there is one allready..
 
         println!("waiting for 2nd event from replica_manager_1");
-        let members = sub1.recv().await.unwrap();
-        assert_eq!(members, MembershipEvent{
+        let members1 = sub1.recv().await.unwrap();
+        assert_eq!(members1, MembershipEvent{
             replica_id: replica_manager_1.replica_id,
             members: vec![replica_manager_1.replica_id, replica_manager_2.replica_id],
         });
+
+        // one and only one of the replicas should be the leader for the key "test"
+        assert!(
+            members1.is_leader_for("test")
+            ^
+            members2.is_leader_for("test")
+        );
 
     }
 
