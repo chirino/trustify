@@ -1,5 +1,6 @@
 pub mod context;
 pub(crate) mod progress;
+mod replica_manager;
 
 use crate::{
     model::{Importer, State},
@@ -11,6 +12,7 @@ use crate::{
     service::{Error, ImporterService},
 };
 use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::sync::{Arc, RwLock};
 use time::OffsetDateTime;
 use tokio::{
     task::{spawn_local, JoinHandle, LocalSet},
@@ -20,6 +22,7 @@ use tracing::instrument;
 use trustify_common::db::Database;
 use trustify_module_analysis::service::AnalysisService;
 use trustify_module_storage::service::dispatch::DispatchBackend;
+use crate::server::replica_manager::ReplicaManager;
 
 /// run the importer loop
 pub async fn importer(
@@ -71,6 +74,28 @@ impl Server {
     }
 
     async fn run_local(self) -> anyhow::Result<()> {
+        let replica_manager = ReplicaManager::new(self.db.clone(), Duration::from_secs(10));
+        let mut sub = replica_manager.subscribe();
+        replica_manager.start().await;
+
+        let membership = Arc::new(RwLock::new(None));
+        let membership_copy = membership.clone();
+
+        _ = spawn_local(async move {
+            let membership = membership_copy;
+            loop {
+                match sub.recv().await {
+                    Ok(event) => {
+                        let mut membership = membership.write().expect("lock is poisoned");
+                        *membership = Some(event);
+                    }
+                    Err(err) => {
+                        log::error!("Error while receiving replica event: {}", err);
+                    }
+                }
+            }
+        });
+
         let service = ImporterService::new(self.db.clone());
         let runner = ImportRunner {
             db: self.db.clone(),
@@ -91,6 +116,22 @@ impl Server {
 
             // Remove jobs that are finished
             runs.retain(|_, job| !job.is_finished());
+
+            {
+                let guard = membership.read().expect("lock is poisoned");
+                match guard.as_ref() {
+                    Some(membership) => {
+                        // let's only run jobs if we are the leader... we could do fancier hash distributions
+                        // too... but let's keep it simple for now.
+                        if !membership.is_leader() {
+                            continue;
+                        }
+                    }
+                    None => {
+                        continue
+                    }
+                }
+            }
 
             // Asynchronously fire off new jobs subject to max concurrency
             let todo: Vec<_> = service

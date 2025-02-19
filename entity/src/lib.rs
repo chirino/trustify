@@ -21,6 +21,7 @@ pub mod purl_license_assertion;
 pub mod purl_status;
 pub mod qualified_purl;
 pub mod relationship;
+pub mod replica;
 pub mod sbom;
 pub mod sbom_external_node;
 pub mod sbom_file;
