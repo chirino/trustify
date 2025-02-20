@@ -1,3 +1,4 @@
+pub mod cancel_context;
 pub mod context;
 pub(crate) mod progress;
 
@@ -121,7 +122,7 @@ async fn import(
     let locked = Heart::beat(&importer, &runner.db)
         .await
         .map_err(|_| Error::MidAirCollision)?;
-    let _heartbeat = Heart::new(locked, runner.db.clone());
+    let heartbeat = Heart::new(locked, runner.db.clone());
 
     log::debug!("  {}: {:?}", importer.name, importer.data.configuration);
 
@@ -132,7 +133,11 @@ async fn import(
 
     log::info!("Starting run: {}", importer.name);
 
-    let context = ServiceRunContext::new(service.clone(), importer.name.clone());
+    let context = ServiceRunContext::new(
+        service.clone(),
+        importer.name.clone(),
+        heartbeat.cancel_context(),
+    );
 
     let (last_error, report, continuation) = match runner
         .run_once(

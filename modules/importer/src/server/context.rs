@@ -1,3 +1,4 @@
+use crate::server::cancel_context::CancelContext;
 use crate::{
     runner::{
         context::RunContext,
@@ -6,6 +7,7 @@ use crate::{
     server::progress::ServiceProgress,
     service::ImporterService,
 };
+use std::sync::Arc;
 use std::{
     fmt::Debug,
     time::{Duration, Instant},
@@ -23,13 +25,14 @@ pub struct ServiceRunContext {
 }
 
 impl ServiceRunContext {
-    pub fn new(service: ImporterService, name: String) -> Self {
+    pub fn new(service: ImporterService, name: String, cancel_context: Arc<CancelContext>) -> Self {
         Self {
             name: name.clone(),
             state: Mutex::new(CheckCancellation::new(
                 service.clone(),
                 name,
                 Duration::from_secs(60),
+                cancel_context,
             )),
             service,
         }
@@ -58,16 +61,23 @@ struct CheckCancellation {
     canceled: bool,
     last_check: Instant,
     period: Duration,
+    cancel_context: Arc<CancelContext>,
 }
 
 impl CheckCancellation {
-    pub fn new(service: ImporterService, importer_name: String, period: Duration) -> Self {
+    pub fn new(
+        service: ImporterService,
+        importer_name: String,
+        period: Duration,
+        cancel_context: Arc<CancelContext>,
+    ) -> Self {
         Self {
             service,
             importer_name,
             canceled: false,
             last_check: Instant::now(),
             period,
+            cancel_context,
         }
     }
 
@@ -79,6 +89,9 @@ impl CheckCancellation {
             // If we are not canceled yet, and the check expired, we check again.
             // Also, if we encounter an error while checking, we abort, assuming we are canceled.
             self.canceled = self.perform_check().await.unwrap_or(true);
+        }
+        if self.cancel_context.is_canceled() {
+            self.canceled = true;
         }
 
         // return the last known state

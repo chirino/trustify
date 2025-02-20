@@ -1,6 +1,8 @@
 use super::Error;
 use crate::model::Importer;
+use crate::server::cancel_context::CancelContext;
 use sea_orm::{entity::*, prelude::*, QueryFilter};
+use std::sync::Arc;
 use time::OffsetDateTime;
 use tokio::{
     task::JoinHandle,
@@ -12,6 +14,7 @@ use trustify_entity::importer;
 pub struct Heart {
     name: String,
     handle: JoinHandle<()>,
+    cancel_context: Arc<CancelContext>,
 }
 
 impl Heart {
@@ -19,21 +22,44 @@ impl Heart {
 
     pub fn new(importer: Importer, db: Database) -> Self {
         let name = importer.name.clone();
+        let cancel_context = Arc::new(CancelContext::new());
+        let cancel_context_clone = cancel_context.clone();
         let handle = tokio::spawn(async move {
             let mut interval = interval(Heart::RATE);
             let mut importer = importer;
             loop {
+                // Wait for either the interval or a cancel_context signal
+                tokio::select! {
+                    _ = interval.tick() => {},
+                    _ = cancel_context_clone.done() => {},
+                }
+                if cancel_context_clone.is_canceled() {
+                    break;
+                }
+
                 interval.tick().await;
                 match Self::beat(&importer, &db).await {
                     Ok(i) => {
                         log::debug!("{}: {:#?}", i.name, i.data.progress);
                         importer = i;
                     }
-                    Err(e) => log::error!("Failed to send heartbeat for '{}': {e}", importer.name),
+                    Err(e) => {
+                        log::error!("Failed to send heartbeat for '{}': {e}", importer.name);
+                        cancel_context_clone.cancel();
+                        break;
+                    }
                 }
             }
         });
-        Self { name, handle }
+        Self {
+            name,
+            handle,
+            cancel_context,
+        }
+    }
+
+    pub fn cancel_context(&self) -> Arc<CancelContext> {
+        self.cancel_context.clone()
     }
 
     // Updates the importer record with the current time, but only if
